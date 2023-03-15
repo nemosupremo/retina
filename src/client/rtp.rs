@@ -99,19 +99,21 @@ impl InorderParser {
             if matches!(stream_ctx.0, StreamContextInner::Udp(_)) {
                 super::note_stale_live555_data(tool, session_options);
             }
-            bail!(ErrorInt::RtpPacketError {
-                conn_ctx: *conn_ctx,
-                pkt_ctx: *pkt_ctx,
-                stream_ctx: stream_ctx.to_owned(),
-                stream_id,
-                ssrc,
-                sequence_number,
-                description: format!(
-                    "Wrong ssrc after {} packets; expecting ssrc={:08x?} seq={:04x?} \
-                     (initial ssrc: {:?})",
-                    self.seen_packets, self.ssrc, self.next_seq, self.initial_ssrc,
-                ),
-            });
+            if self.seen_packets > 0 {
+                bail!(ErrorInt::RtpPacketError {
+                    conn_ctx: *conn_ctx,
+                    pkt_ctx: *pkt_ctx,
+                    stream_ctx: stream_ctx.to_owned(),
+                    stream_id,
+                    ssrc,
+                    sequence_number,
+                    description: format!(
+                        "Wrong ssrc after {} packets; expecting ssrc={:08x?} seq={:04x?} \
+                         (initial ssrc: {:?})",
+                        self.seen_packets, self.ssrc, self.next_seq, self.initial_ssrc,
+                    ),
+                });
+            }
         }
         if loss > 0x80_00 {
             if matches!(stream_ctx.0, StreamContextInner::Tcp { .. }) {
