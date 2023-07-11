@@ -21,6 +21,8 @@ pub(crate) mod g723;
 
 #[doc(hidden)]
 pub mod h264;
+#[doc(hidden)]
+pub mod h265;
 
 pub(crate) mod onvif;
 pub(crate) mod simple_audio;
@@ -430,6 +432,7 @@ enum DepacketizerInner {
     SimpleAudio(Box<simple_audio::Depacketizer>),
     G723(Box<g723::Depacketizer>),
     H264(Box<h264::Depacketizer>),
+    H265(Box<h265::Depacketizer>),
     Onvif(Box<onvif::Depacketizer>),
 }
 
@@ -447,6 +450,10 @@ impl Depacketizer {
         // https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml#rtp-parameters-2
         Ok(Depacketizer(match (media, encoding_name) {
             ("video", "h264") => DepacketizerInner::H264(Box::new(h264::Depacketizer::new(
+                clock_rate,
+                format_specific_params,
+            )?)),
+            ("video", "h265") => DepacketizerInner::H265(Box::new(h265::Depacketizer::new(
                 clock_rate,
                 format_specific_params,
             )?)),
@@ -518,6 +525,7 @@ impl Depacketizer {
             DepacketizerInner::Aac(d) => d.parameters(),
             DepacketizerInner::G723(d) => d.parameters(),
             DepacketizerInner::H264(d) => d.parameters(),
+            DepacketizerInner::H265(d) => d.parameters(),
             DepacketizerInner::Onvif(d) => d.parameters(),
             DepacketizerInner::SimpleAudio(d) => d.parameters(),
         }
@@ -533,6 +541,7 @@ impl Depacketizer {
             DepacketizerInner::Aac(d) => d.push(input),
             DepacketizerInner::G723(d) => d.push(input),
             DepacketizerInner::H264(d) => d.push(input),
+            DepacketizerInner::H265(d) => d.push(input),
             DepacketizerInner::Onvif(d) => d.push(input),
             DepacketizerInner::SimpleAudio(d) => d.push(input),
         }
@@ -551,6 +560,7 @@ impl Depacketizer {
             DepacketizerInner::Aac(d) => d.pull(conn_ctx, stream_ctx),
             DepacketizerInner::G723(d) => Ok(d.pull()),
             DepacketizerInner::H264(d) => Ok(d.pull()),
+            DepacketizerInner::H265(d) => Ok(d.pull()),
             DepacketizerInner::Onvif(d) => Ok(d.pull()),
             DepacketizerInner::SimpleAudio(d) => Ok(d.pull()),
         }
@@ -578,6 +588,10 @@ mod tests {
             (
                 "h264::Depacketizer",
                 std::mem::size_of::<h264::Depacketizer>(),
+            ),
+            (
+                "h265::Depacketizer",
+                std::mem::size_of::<h265::Depacketizer>(),
             ),
             (
                 "onvif::Depacketizer",

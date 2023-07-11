@@ -111,6 +111,7 @@ pub struct Mp4Writer<W: AsyncWrite + AsyncSeek + Send + Unpin> {
     video_trak: TrakTracker,
     audio_trak: TrakTracker,
     inner: W,
+    is_hevc: bool,
 }
 
 /// A chunk: a group of samples that have consecutive byte positions and same sample description.
@@ -240,6 +241,7 @@ impl<W: AsyncWrite + AsyncSeek + Send + Unpin> Mp4Writer<W> {
         audio_params: Option<Box<AudioParameters>>,
         allow_loss: bool,
         mut inner: W,
+        is_hevc: bool,
     ) -> Result<Self, Error> {
         let mut buf = BytesMut::new();
         write_box!(&mut buf, b"ftyp", {
@@ -263,6 +265,7 @@ impl<W: AsyncWrite + AsyncSeek + Send + Unpin> Mp4Writer<W> {
             video_sync_sample_nums: Vec::new(),
             mdat_start,
             mdat_pos: mdat_start,
+            is_hevc,
         })
     }
 
@@ -501,7 +504,7 @@ impl<W: AsyncWrite + AsyncSeek + Send + Unpin> Mp4Writer<W> {
         parameters: &VideoParameters,
     ) -> Result<(), Error> {
         // TODO: this should move to client::VideoParameters::sample_entry() or some such.
-        write_box!(buf, b"avc1", {
+        write_box!(buf, if self.is_hevc { b"hvc1" } else { b"avc1" }, {
             buf.put_u32(0);
             buf.put_u32(1); // data_reference_index = 1
             buf.extend_from_slice(&[0; 16]);
@@ -522,7 +525,7 @@ impl<W: AsyncWrite + AsyncSeek + Send + Unpin> Mp4Writer<W> {
                 0x00, 0x00, 0x00, 0x00, //
                 0x00, 0x18, 0xff, 0xff, // depth + pre_defined
             ]);
-            write_box!(buf, b"avcC", {
+            write_box!(buf, if self.is_hevc { b"hvcC" } else { b"avcC" }, {
                 buf.extend_from_slice(parameters.extra_data());
             });
         });
@@ -667,6 +670,7 @@ async fn write_mp4(
     session: retina::client::Session<retina::client::Described>,
     audio_params: Option<Box<AudioParameters>>,
     stop_signal: Pin<Box<dyn Future<Output = Result<(), std::io::Error>>>>,
+    is_hevc: bool,
 ) -> Result<(), Error> {
     let mut session = session
         .play(
@@ -684,7 +688,7 @@ async fn write_mp4(
     tmp_filename.push(PARTIAL_SUFFIX); // OsString::push doesn't put in a '/', unlike PathBuf::.
     let tmp_filename: PathBuf = tmp_filename.into();
     let out = tokio::fs::File::create(&tmp_filename).await?;
-    let mut mp4 = Mp4Writer::new(audio_params, opts.allow_loss, out).await?;
+    let mut mp4 = Mp4Writer::new(audio_params, opts.allow_loss, out, is_hevc).await?;
     let result = copy(opts, &mut session, stop_signal, &mut mp4).await;
     if let Err(e) = result {
         // Log errors about finishing, returning the original error.
@@ -729,17 +733,19 @@ pub async fn run(opts: Opts) -> Result<(), Error> {
             .teardown(opts.teardown),
     )
     .await?;
+    let mut is_hevc = false;
     let video_stream_i = if !opts.no_video {
         let s = session.streams().iter().position(|s| {
             if s.media() == "video" {
-                if s.encoding_name() == "h264" {
-                    log::info!("Using h264 video stream");
+                let encoding = s.encoding_name();
+                if encoding == "h264" || encoding == "h265" {
+                    if encoding == "h265" {
+                        is_hevc = true;
+                    }
+                    log::info!("Using {encoding} video stream");
                     return true;
                 }
-                log::info!(
-                    "Ignoring {} video stream because it's unsupported",
-                    s.encoding_name(),
-                );
+                log::info!("Ignoring {encoding} video stream because it's unsupported",);
             }
             false
         });
@@ -790,7 +796,7 @@ pub async fn run(opts: Opts) -> Result<(), Error> {
     if video_stream_i.is_none() && audio_stream.is_none() {
         bail!("Exiting because no video or audio stream was selected; see info log messages above");
     }
-    let result = write_mp4(&opts, session, audio_stream.map(|(_i, p)| p), stop_signal).await;
+    let result = write_mp4(&opts, session, audio_stream.map(|(_i, p)| p), stop_signal, is_hevc).await;
 
     // Session has now been dropped, on success or failure. A TEARDOWN should
     // be pending if necessary. session_group.await_teardown() will wait for it.
