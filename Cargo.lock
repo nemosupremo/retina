@@ -109,9 +109,9 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anyhow"
-version = "1.0.58"
+version = "1.0.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb07d2053ccdbe10e2af2995a2f116c1330396493dc1269f6a91d0ae82e19704"
+checksum = "9c7d0618f0e0b7e8ff11427422b64564d5fb0be1940354bfe2e0529b18a9d9b8"
 
 [[package]]
 name = "arrayvec"
@@ -188,9 +188,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitstream-io"
-version = "1.5.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97d524fdb78bf6dc6d2dc4c02043e4b4962ede0a17ae3e13f0ed211a7eda5897"
+checksum = "82704769cb85a22df2c54d6bdd6a158b7931d256cf3248a07d6ecbe9d58b31d7"
 
 [[package]]
 name = "bitvec"
@@ -202,6 +202,15 @@ dependencies = [
  "radium",
  "tap",
  "wyz",
+]
+
+[[package]]
+name = "bitvec_helpers"
+version = "3.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ef6883bd86b4112b56be19de3a1628de6c4063be7be6e641d484c83069efb4a"
+dependencies = [
+ "bitstream-io",
 ]
 
 [[package]]
@@ -730,7 +739,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cddf120f700b411b2b02ebeb7f04dc0b7c8835909a6c2f52bf72ed0dd3433b2"
 dependencies = [
  "der-oid-macro 0.5.0",
- "nom 7.1.1",
+ "nom 7.1.3",
  "num-bigint",
  "num-traits",
  "rusticata-macros 4.1.0",
@@ -1127,6 +1136,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hevc_parser"
+version = "0.6.1"
+source = "git+https://github.com/ionosnetworks/hevc_parser?rev=fc40ce6#fc40ce6f67f874c209534a301d95ea1a92ffd94c"
+dependencies = [
+ "anyhow",
+ "bitvec_helpers",
+ "nom 7.1.3",
+]
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1455,9 +1474,9 @@ dependencies = [
 
 [[package]]
 name = "nom"
-version = "7.1.1"
+version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8903e5a29a317527874d0402f867152a3d21c908bb0b933e416c65e301d4c36"
+checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
@@ -1873,10 +1892,12 @@ version = "0.4.5"
 dependencies = [
  "base64",
  "bitstream-io",
+ "bitvec_helpers",
  "bytes",
  "criterion",
  "futures",
  "h264-reader",
+ "hevc_parser",
  "hex",
  "http-auth",
  "log",
@@ -1963,7 +1984,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a1aec90dc5d8dec85c14032885770801439acb1651b2f166745ce482a2ddeaf"
 dependencies = [
  "cookie-factory",
- "nom 7.1.1",
+ "nom 7.1.3",
  "tinyvec",
  "url",
 ]
@@ -1983,7 +2004,7 @@ version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf0c4a6ece9950b9abdb62b1cfcf2a68b3b67a10ba445b3bb85be2a293d0632"
 dependencies = [
- "nom 7.1.1",
+ "nom 7.1.3",
 ]
 
 [[package]]
@@ -3088,7 +3109,7 @@ dependencies = [
  "data-encoding",
  "der-parser 6.0.1",
  "lazy_static",
- "nom 7.1.1",
+ "nom 7.1.3",
  "oid-registry 0.2.0",
  "ring",
  "rusticata-macros 4.1.0",
