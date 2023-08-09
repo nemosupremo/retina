@@ -694,7 +694,7 @@ impl InternalParameters {
             "hvc1.{general_profile_space}{general_profile_idc}.{general_profile_compatibility_flags:02X}.{general_tier_flag}{general_level_idc}.{constraints:02X}",
         );
 
-        let pixel_dimensions = (sps.width as u32, sps.height as u32);
+        let pixel_dimensions = (sps.width() as u32, sps.height() as u32);
         let (pixel_aspect_ratio, frame_rate) = if sps.vui_present {
             let frame_rate = (
                 sps.vui_parameters.vui_num_units_in_tick,
