@@ -22,7 +22,7 @@ bitvec_helpers = { version = "3.1.2", default-features = false, features = ["bit
 bytes = "1.0.1"
 futures = "0.3.14"
 h264-reader = "0.6.0"
-hevc_parser = { git = "https://github.com/ionosnetworks/hevc_parser", rev = "fc40ce6" }
+hevc_parser = { git = "https://github.com/ionosnetworks/hevc_parser", rev = "026a2ef" }
 hex = "0.4.3"
 http-auth = "0.1.2"
 log = "0.4.8"

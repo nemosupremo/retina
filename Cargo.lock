@@ -1138,7 +1138,7 @@ dependencies = [
 [[package]]
 name = "hevc_parser"
 version = "0.6.1"
-source = "git+https://github.com/ionosnetworks/hevc_parser?rev=fc40ce6#fc40ce6f67f874c209534a301d95ea1a92ffd94c"
+source = "git+https://github.com/ionosnetworks/hevc_parser?rev=026a2ef#026a2ef64847ef92546e1698767a9da092981834"
 dependencies = [
  "anyhow",
  "bitvec_helpers",
