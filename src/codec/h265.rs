@@ -162,7 +162,11 @@ impl Depacketizer {
                                 pkt.timestamp()
                             ));
                         }
-                        let last_nal_hdr = self.nals.last().unwrap().hdr;
+                        let last_nal_hdr = self
+                            .nals
+                            .last()
+                            .ok_or("nals should not be empty".to_string())?
+                            .hdr;
                         if can_end_au(last_nal_hdr.nal_unit_type()) {
                             access_unit.end_ctx = *pkt.ctx();
                             self.pending =
@@ -214,7 +218,7 @@ impl Depacketizer {
 
         let nal_header = data.get_u16();
         let hdr = NalHeader::new(nal_header)
-            .expect(&format!("NAL header {nal_header:02x} has F bit set"));
+            .map_err(|_| format!("NAL header {nal_header:02x} has F bit set"))?;
         match hdr.nal_unit_type().id() {
             1..=47 => {
                 // Single NAL Unit. https://datatracker.ietf.org/doc/html/rfc7798#section-4.4.1
@@ -223,7 +227,8 @@ impl Depacketizer {
                         "Non-fragmented NAL {nal_header:02x} while fragment in progress"
                     ));
                 }
-                let len = u32::try_from(data.len()).expect("data len < u16::MAX") + 2;
+                let len =
+                    u32::try_from(data.len()).map_err(|_| "data len > u16::MAX".to_string())? + 2;
                 let next_piece_idx = self.add_piece(data)?;
                 self.nals.push(Nal {
                     hdr,
@@ -254,8 +259,9 @@ impl Depacketizer {
                         }
                         std::cmp::Ordering::Equal => {
                             let nal_header = data.get_u16();
-                            let hdr = NalHeader::new(nal_header)
-                                .expect(&format!("NAL header {nal_header:02x} has F bit set"));
+                            let hdr = NalHeader::new(nal_header).map_err(|_| {
+                                format!("NAL header {nal_header:02x} has F bit set")
+                            })?;
                             let next_piece_idx = self.add_piece(data)?;
                             self.nals.push(Nal {
                                 hdr,
@@ -266,8 +272,9 @@ impl Depacketizer {
                         }
                         std::cmp::Ordering::Greater => {
                             let nal_header = data.get_u16();
-                            let hdr = NalHeader::new(nal_header)
-                                .expect(&format!("NAL header {nal_header:02x} has F bit set"));
+                            let hdr = NalHeader::new(nal_header).map_err(|_| {
+                                format!("NAL header {nal_header:02x} has F bit set")
+                            })?;
                             let piece = data.split_to(usize::from(len));
                             let next_piece_idx = self.add_piece(piece)?;
                             self.nals.push(Nal {
@@ -293,14 +300,15 @@ impl Depacketizer {
                         | (hdr.nuh_layer_id() << 3) as u16
                         | hdr.nuh_temporal_id_plus1() as u16,
                 )
-                .expect("NalHeader is valid");
+                .map_err(|_| "NalHeader is invalid".to_string())?;
                 if start && end {
                     return Err(format!("Invalid FU header {fu_header:02x}"));
                 }
                 if !end && mark {
                     return Err("FU pkt with MARK && !END".into());
                 }
-                let u32_len = u32::try_from(data.len()).expect("RTP packet len must be < u16::MAX");
+                let u32_len = u32::try_from(data.len())
+                    .map_err(|_| "RTP packet len must be < u16::MAX".to_string())?;
                 match (start, access_unit.in_fu) {
                     (true, true) => return Err("FU with start bit while frag in progress".into()),
                     (true, false) => {
@@ -314,7 +322,10 @@ impl Depacketizer {
                     }
                     (false, true) => {
                         let pieces = self.add_piece(data)?;
-                        let nal = self.nals.last_mut().expect("nals non-empty while in fu");
+                        let nal = self
+                            .nals
+                            .last_mut()
+                            .ok_or("nals non-empty while in fu".to_string())?;
                         if u16::from(hdr) != u16::from(nal.hdr) {
                             return Err(format!(
                                 "FU has inconsistent NAL type: {:?} then {:?}",
@@ -347,7 +358,11 @@ impl Depacketizer {
         }
 
         self.input_state = if mark {
-            let last_nal_hdr = self.nals.last().unwrap().hdr;
+            let last_nal_hdr = self
+                .nals
+                .last()
+                .ok_or("nals should not be empty after mark".to_string())?
+                .hdr;
             if can_end_au(last_nal_hdr.nal_unit_type()) {
                 access_unit.end_ctx = ctx;
                 self.pending = Some(self.finalize_access_unit(access_unit, "mark")?);
@@ -491,8 +506,15 @@ impl Depacketizer {
         let mut offsets = vec![];
         parser.get_offsets(&nals, &mut offsets);
         let parsed_nals = parser
-            .split_nals(&nals, &offsets, *offsets.last().unwrap(), false)
-            .expect("failed to get nals from hevc_parser");
+            .split_nals(
+                &nals,
+                &offsets,
+                *offsets
+                    .last()
+                    .ok_or("nal offsets should not be empty on finalize".to_string())?,
+                false,
+            )
+            .map_err(|_| "failed to get nals from hevc_parser".to_string())?;
 
         let mut data = Vec::with_capacity(retained_len);
         for nal in parsed_nals {
