@@ -32,7 +32,7 @@ pretty-hex = "0.3.0"
 rand = "0.8.3"
 rtsp-types = "0.0.5"
 # sdp-types = "0.1.4"
-sdp-types = { git = "https://github.com/ionosnetworks/sdp-types", rev = "cc831bc" }
+sdp-types = { git = "https://github.com/ionosnetworks/sdp-types", rev = "18c45cd" }
 smallvec = { version = "1.6.1", features = ["union"] }
 thiserror = "1.0.25"
 time = "0.1.43"
