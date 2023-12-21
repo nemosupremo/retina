@@ -100,19 +100,28 @@ impl InorderParser {
                 super::note_stale_live555_data(tool, session_options);
             }
             if self.seen_packets > 0 {
-                bail!(ErrorInt::RtpPacketError {
-                    conn_ctx: *conn_ctx,
-                    pkt_ctx: *pkt_ctx,
-                    stream_ctx: stream_ctx.to_owned(),
-                    stream_id,
-                    ssrc,
-                    sequence_number,
-                    description: format!(
-                        "Wrong ssrc after {} packets; expecting ssrc={:08x?} seq={:04x?} \
-                         (initial ssrc: {:?})",
-                        self.seen_packets, self.ssrc, self.next_seq, self.initial_ssrc,
-                    ),
-                });
+                if false {
+                    bail!(ErrorInt::RtpPacketError {
+                        conn_ctx: *conn_ctx,
+                        pkt_ctx: *pkt_ctx,
+                        stream_ctx: stream_ctx.to_owned(),
+                        stream_id,
+                        ssrc,
+                        sequence_number,
+                        description: format!(
+                            "Wrong ssrc after {} packets; expecting ssrc={:08x?} seq={:04x?} \
+                             (initial ssrc: {:?})",
+                            self.seen_packets, self.ssrc, self.next_seq, self.initial_ssrc,
+                        ),
+                    });
+                } else {
+                    log::info!(
+                        "Skipping invalid rtp packet: Wrong ssrc after {} packets; expecting ssrc={:08x?} seq={:04x?} \
+                             (initial ssrc: {:?})",
+                            self.seen_packets, self.ssrc, self.next_seq, self.initial_ssrc,
+                    );
+                    return Ok(None);
+                }
             }
         }
         if loss > 0x80_00 {
@@ -141,7 +150,7 @@ impl InorderParser {
         }
         let timestamp = match timeline.advance_to(raw.timestamp()) {
             Ok(ts) => ts,
-            Err(description) => bail!(ErrorInt::RtpPacketError {
+            Err(description) if false => bail!(ErrorInt::RtpPacketError {
                 conn_ctx: *conn_ctx,
                 pkt_ctx: *pkt_ctx,
                 stream_ctx: stream_ctx.to_owned(),
@@ -150,6 +159,13 @@ impl InorderParser {
                 sequence_number,
                 description,
             }),
+            Err(description) if true => {
+                log::info!(
+                    "Failed to advance timestamp: {}", description,
+                );
+                return Ok(None);
+            },
+            _ => unreachable!()
         };
         self.ssrc = Some(ssrc);
         self.next_seq = Some(sequence_number.wrapping_add(1));
