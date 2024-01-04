@@ -172,14 +172,14 @@ impl Depacketizer {
                         AccessUnit::start(&pkt, 0, false)
                     } else if access_unit.timestamp.timestamp != pkt.timestamp().timestamp {
                         if access_unit.in_fu_a {
-                            return Err(format!(
+                            log::debug!(
                                 "Timestamp changed from {} to {} in the middle of a fragmented NAL",
                                 access_unit.timestamp,
                                 pkt.timestamp()
-                            ));
+                            );
                         }
                         let last_nal_hdr = self.nals.last().unwrap().hdr;
-                        if can_end_au(last_nal_hdr.nal_unit_type()) {
+                        if !access_unit.in_fu_a && can_end_au(last_nal_hdr.nal_unit_type()) {
                             access_unit.end_ctx = *pkt.ctx();
                             self.pending =
                                 Some(self.finalize_access_unit(access_unit, "ts change")?);
@@ -236,9 +236,10 @@ impl Depacketizer {
         match nal_header & 0b11111 {
             1..=23 => {
                 if access_unit.in_fu_a {
-                    return Err(format!(
-                        "Non-fragmented NAL {nal_header:02x} while fragment in progress"
-                    ));
+                    log::debug!("Non-fragmented NAL {nal_header:02x} while fragment in progress");
+                    self.nals.pop();
+                    self.pieces.clear();
+                    access_unit.in_fu_a = false;
                 }
                 let len = u32::try_from(data.len()).expect("data len < u16::MAX") + 1;
                 let next_piece_idx = self.add_piece(data)?;
@@ -320,8 +321,13 @@ impl Depacketizer {
                 }
                 let u32_len = u32::try_from(data.len()).expect("RTP packet len must be < u16::MAX");
                 match (start, access_unit.in_fu_a) {
-                    (true, true) => return Err("FU-A with start bit while frag in progress".into()),
-                    (true, false) => {
+                    (true, in_fu_a) => {
+                        if in_fu_a {
+                            log::debug!("FU-A with start bit while frag in progress");
+                            self.nals.pop();
+                            self.pieces.clear();
+                            access_unit.in_fu_a = false;
+                        }
                         self.add_piece(data)?;
                         self.nals.push(Nal {
                             hdr: nal_header,
