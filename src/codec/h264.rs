@@ -309,7 +309,9 @@ impl Depacketizer {
                             .last()
                             .is_some_and(|nal| nal.next_piece_idx == u32::MAX)
                     {
-                        let _ = self.nals.pop();
+                        self.nals.pop();
+                        self.pieces.clear();
+                        access_unit.in_fu_a = false;
                     }
                     return Err(format!("FU-A len {} too short", data.len()));
                 }
