@@ -303,6 +303,14 @@ impl Depacketizer {
             28 => {
                 // FU-A. https://tools.ietf.org/html/rfc6184#section-5.8
                 if data.len() < 2 {
+                    if access_unit.in_fu_a
+                        && self
+                            .nals
+                            .last()
+                            .is_some_and(|nal| nal.next_piece_idx == u32::MAX)
+                    {
+                        let _ = self.nals.pop();
+                    }
                     return Err(format!("FU-A len {} too short", data.len()));
                 }
                 let fu_header = data[0];
