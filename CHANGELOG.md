@@ -1,3 +1,32 @@
+## `v0.4.8` (2024-05-26)
+
+*   support MJPEG codec (contribution from [zanshi](https://github.com/zanshi))
+*   permit `MP2T/` protocol in media description (contribution from
+    (yujincheng08)[https://github.com/yujincheng08)]).
+*   [#102](https://github.com/scottlamb/retina/102): support Reolink cameras
+    which have extraneous bytes following the SPS.
+
+## `v0.4.7` (2024-01-08)
+
+*   support servers that do not set `Content-Type` on `DESCRIBE` responses
+
+## `v0.4.6` (2023-12-29)
+
+*   add default User-Agent header
+*   add policy for handling session IDs. Required for some broken cameras which
+    can change the session ID between `SETUP` calls.
+*   ignore connection refused errors triggered by the firewall punch-through
+    packets.
+*   improve several vague or misleading log messages.
+*   fix inverted logic in live555 bug detection, introduced with `v0.3.10`.
+*   ignore `seq=0` and `seq=1` in `PLAY` response's `RTP-Info` header by default.
+    These values are known to be set erroneously by the Hikvision DS-2CD2032-I
+    and Tapo C320WS, respectively.
+*   customizable behavior for RTCP packets with unknown ssrcs, now defaulting to
+    ignoring them. This also is necessary to interoperate with the Tapo C320WS.
+*   improve some incorrect, misleading, and/or uninformative logging.
+*   minimum Rust is now 1.67.
+
 ## `v0.4.5` (2023-02-02)
 
 *   minimum Rust version is now 1.64.

@@ -46,6 +46,10 @@ pub struct Opts {
     #[arg(default_value_t, long)]
     initial_timestamp: retina::client::InitialTimestampPolicy,
 
+    /// Policy for handling unknown ssrcs in RTCP packets.
+    #[arg(default_value_t, long)]
+    unknown_rtcp_ssrc: retina::client::UnknownRtcpSsrcPolicy,
+
     /// Don't attempt to include video streams.
     #[arg(long)]
     no_video: bool,
@@ -676,7 +680,8 @@ async fn write_mp4(
         .play(
             retina::client::PlayOptions::default()
                 .initial_timestamp(opts.initial_timestamp)
-                .enforce_timestamps_with_max_jump_secs(NonZeroU32::new(10).unwrap()),
+                .enforce_timestamps_with_max_jump_secs(NonZeroU32::new(10).unwrap())
+                .unknown_rtcp_ssrc(opts.unknown_rtcp_ssrc),
         )
         .await?
         .demuxed()?;
@@ -796,7 +801,21 @@ pub async fn run(opts: Opts) -> Result<(), Error> {
     if video_stream_i.is_none() && audio_stream.is_none() {
         bail!("Exiting because no video or audio stream was selected; see info log messages above");
     }
-    let result = write_mp4(&opts, session, audio_stream.map(|(_i, p)| p), stop_signal, is_hevc).await;
+
+    let result = write_mp4(
+        &opts,
+        session,
+        audio_stream.map(|(_i, p)| p),
+        stop_signal,
+        is_hevc,
+    )
+    .await;
+    if result.is_err() {
+        log::info!(
+            "writing MP4 failed; \
+                    details will be logged with `Fatal:` after RTSP session teardown"
+        );
+    }
 
     // Session has now been dropped, on success or failure. A TEARDOWN should
     // be pending if necessary. session_group.await_teardown() will wait for it.

@@ -4,6 +4,7 @@
 //! RTSP client: connect to a server via [`Session`].
 
 use std::convert::TryFrom;
+use std::io;
 use std::mem::MaybeUninit;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU32;
@@ -225,7 +226,7 @@ impl SessionGroup {
                     "teardown Sender shouldn't be dropped; \
                              ensure the Session's tokio runtime is still alive",
                 );
-                r = (*w.borrow()).clone();
+                r.clone_from(&*w.borrow())
             }
 
             // Now an attempt has finished, success or failure.
@@ -279,7 +280,7 @@ impl SessionGroup {
 /// Policy for when to send `TEARDOWN` requests.
 ///
 /// Specify via [`SessionOptions::teardown`].
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum TeardownPolicy {
     /// Automatic.
     ///
@@ -294,6 +295,7 @@ pub enum TeardownPolicy {
     ///     on the existing connection. This is just in case; some servers appear
     ///     to be buggy but don't advertise buggy versions. After the single attempt,
     ///     closes the TCP connection and considers the session done.
+    #[default]
     Auto,
 
     /// Always send `TEARDOWN` requests, regardless of transport.
@@ -304,12 +306,6 @@ pub enum TeardownPolicy {
 
     /// Never send `TEARDOWN` or track stale sessions.
     Never,
-}
-
-impl Default for TeardownPolicy {
-    fn default() -> Self {
-        TeardownPolicy::Auto
-    }
 }
 
 impl std::fmt::Display for TeardownPolicy {
@@ -337,13 +333,14 @@ impl std::str::FromStr for TeardownPolicy {
     }
 }
 
-/// Policy for handling the `rtptime` parameter normally seem in the `RTP-Info` header.
+/// Policy for handling the `rtptime` parameter normally seen in the `RTP-Info` header.
 /// This parameter is used to map each stream's RTP timestamp to NPT ("normal play time"),
 /// allowing multiple streams to be played in sync.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum InitialTimestampPolicy {
     /// Default policy: currently `Require` when playing multiple streams,
     /// `Ignore` otherwise.
+    #[default]
     Default,
 
     /// Require the `rtptime` parameter be present and use it to set NPT. Use
@@ -359,12 +356,6 @@ pub enum InitialTimestampPolicy {
     /// specified for all of them; otherwise assume the first received packet
     /// for each stream is at NPT 0.
     Permissive,
-}
-
-impl Default for InitialTimestampPolicy {
-    fn default() -> Self {
-        InitialTimestampPolicy::Default
-    }
 }
 
 impl std::fmt::Display for InitialTimestampPolicy {
@@ -395,6 +386,105 @@ impl std::str::FromStr for InitialTimestampPolicy {
     }
 }
 
+/// Policy for handling the `seq` parameter normally seen in the `RTP-Info` header.
+#[derive(Copy, Clone, Debug, Default)]
+#[non_exhaustive]
+pub enum InitialSequenceNumberPolicy {
+    /// Default policy: currently same as `IgnoreSuspiciousValues`.
+    #[default]
+    Default,
+
+    /// Always respect the value in the header if present.
+    Respect,
+
+    /// Ignore `0` and `1` values, which we consider "suspicious".
+    ///
+    /// Some cameras appear to send these fixed values then a completely
+    /// different sequence number in the first RTP packet.
+    ///
+    /// *   The Hikvision DS-2CD2032-I appears to always send `seq=0` on its
+    ///     metadata stream.
+    /// *   The Tapo C320WS appears to always send `seq=1` in all streams.
+    IgnoreSuspiciousValues,
+
+    /// Always ignore, starting the sequence number from observed RTP packets.
+    Ignore,
+}
+
+impl std::fmt::Display for InitialSequenceNumberPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(match self {
+            InitialSequenceNumberPolicy::Default => "default",
+            InitialSequenceNumberPolicy::Respect => "respect",
+            InitialSequenceNumberPolicy::IgnoreSuspiciousValues => "ignore-suspicious-values",
+            InitialSequenceNumberPolicy::Ignore => "ignore",
+        })
+    }
+}
+
+impl std::str::FromStr for InitialSequenceNumberPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => InitialSequenceNumberPolicy::Default,
+            "respect" => InitialSequenceNumberPolicy::Respect,
+            "ignore-suspicious-values" => InitialSequenceNumberPolicy::IgnoreSuspiciousValues,
+            "ignore" => InitialSequenceNumberPolicy::Ignore,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad InitialSequenceNumberPolicy {s}; \
+                 expected default, respect, ignore-suspicious-values, or ignore"
+            ))),
+        })
+    }
+}
+
+/// Policy for handling unknown `ssrc` value in RTCP messages.
+#[derive(Copy, Clone, Debug, Default)]
+#[non_exhaustive]
+pub enum UnknownRtcpSsrcPolicy {
+    /// Default policy: currently same as `DropPackets`.
+    #[default]
+    Default,
+
+    /// Abort the session on encountering an unknown `ssrc`.
+    AbortSession,
+
+    /// Drop RTCP packets with an unknown `ssrc`.
+    DropPackets,
+
+    /// Process the packets as if they had the expected `ssrc`.
+    ProcessPackets,
+}
+
+impl std::fmt::Display for UnknownRtcpSsrcPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(match self {
+            UnknownRtcpSsrcPolicy::Default => "default",
+            UnknownRtcpSsrcPolicy::AbortSession => "abort-session",
+            UnknownRtcpSsrcPolicy::DropPackets => "drop-packets",
+            UnknownRtcpSsrcPolicy::ProcessPackets => "process-packets",
+        })
+    }
+}
+
+impl std::str::FromStr for UnknownRtcpSsrcPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => UnknownRtcpSsrcPolicy::Default,
+            "abort-session" => UnknownRtcpSsrcPolicy::AbortSession,
+            "drop-packets" => UnknownRtcpSsrcPolicy::DropPackets,
+            "process-packets" => UnknownRtcpSsrcPolicy::ProcessPackets,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad UnknownRtcpSsrcPolicy {s}; \
+                 expected default, abort-session, drop-packets, or process-packets"
+            ))),
+        })
+    }
+}
+
 /// Returns an appropriate keepalive interval for `session`.
 ///
 /// This generally uses half the session timeout. However, it's capped in case
@@ -414,6 +504,7 @@ pub struct SessionOptions {
     session_group: Option<Arc<SessionGroup>>,
     teardown: TeardownPolicy,
     unassigned_channel_data: UnassignedChannelDataPolicy,
+    session_id: SessionIdPolicy,
 }
 
 /// Policy for handling data received on unassigned RTSP interleaved channels.
@@ -478,6 +569,49 @@ impl std::str::FromStr for UnassignedChannelDataPolicy {
             _ => bail!(ErrorInt::InvalidArgument(format!(
                 "bad UnassignedChannelDataPolicy {s}; expected auto, assume-stale-session, error, \
                  or ignore"
+            ))),
+        })
+    }
+}
+
+/// Policy for handling the session ID returned by the server in response to
+/// `SETUP` requests.
+#[derive(Copy, Clone, Debug, Default)]
+pub enum SessionIdPolicy {
+    /// Default policy: currently `RequireMatch`.
+    #[default]
+    Default,
+
+    /// Requires the server to return the same session ID for all `SETUP`
+    /// requests in the session.
+    RequireMatch,
+
+    /// Uses the session ID returned from the first `SETUP` request and ignores
+    /// any subsequent changes. Required for some broken cameras.
+    UseFirst,
+}
+
+impl std::fmt::Display for SessionIdPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(match self {
+            SessionIdPolicy::Default => "default",
+            SessionIdPolicy::RequireMatch => "require-match",
+            SessionIdPolicy::UseFirst => "use-first",
+        })
+    }
+}
+
+impl std::str::FromStr for SessionIdPolicy {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "default" => SessionIdPolicy::Default,
+            "require-match" => SessionIdPolicy::RequireMatch,
+            "use-first" => SessionIdPolicy::UseFirst,
+            _ => bail!(ErrorInt::InvalidArgument(format!(
+                "bad SessionIdPolicy {s}; \
+                 expected default, require-match or use-first"
             ))),
         })
     }
@@ -574,6 +708,11 @@ impl SessionOptions {
         self.unassigned_channel_data = policy;
         self
     }
+
+    pub fn session_id(mut self, policy: SessionIdPolicy) -> Self {
+        self.session_id = policy;
+        self
+    }
 }
 
 /// Per-stream options decided for `SETUP` time, for future expansion.
@@ -601,8 +740,9 @@ impl SetupOptions {
 #[derive(Default)]
 pub struct PlayOptions {
     initial_timestamp: InitialTimestampPolicy,
-    ignore_zero_seq: bool,
+    initial_seq: InitialSequenceNumberPolicy,
     enforce_timestamps_with_max_jump_secs: Option<NonZeroU32>,
+    unknown_rtcp_ssrc: UnknownRtcpSsrcPolicy,
 }
 
 impl PlayOptions {
@@ -614,14 +754,32 @@ impl PlayOptions {
         }
     }
 
-    /// If the `RTP-Time` specifies `seq=0`, ignore it.
+    pub fn initial_seq(self, initial_seq: InitialSequenceNumberPolicy) -> Self {
+        Self {
+            initial_seq,
+            ..self
+        }
+    }
+
+    pub fn unknown_rtcp_ssrc(self, unknown_rtcp_ssrc: UnknownRtcpSsrcPolicy) -> Self {
+        Self {
+            unknown_rtcp_ssrc,
+            ..self
+        }
+    }
+
+    /// If the `RTP-Time` specifies `seq=0` or `seq=1`, ignore it.
     ///
-    /// Some cameras set this value then start the stream with something
-    /// dramatically different. (Eg the Hikvision DS-2CD2032-I on its metadata
-    /// stream; the other streams are fine.)
+    /// `ignore_zero_seq(true)` is an outdated spelling of
+    /// `initial_seq(InitialSequenceNumberPolicy::IgnoreSuspiciousValues)`,
+    /// which is currently the default anyway.
+    #[deprecated]
     pub fn ignore_zero_seq(self, ignore_zero_seq: bool) -> Self {
         Self {
-            ignore_zero_seq,
+            initial_seq: match ignore_zero_seq {
+                true => InitialSequenceNumberPolicy::IgnoreSuspiciousValues,
+                false => InitialSequenceNumberPolicy::Respect,
+            },
             ..self
         }
     }
@@ -1251,11 +1409,11 @@ impl RtspConnection {
             }
         };
 
+        let channel_id = data.channel_id();
         if live555 {
-            note_stale_live555_data(tool, options);
+            note_stale_live555_data(tool, options, self.inner.ctx(), channel_id, &msg_ctx);
         }
 
-        let channel_id = data.channel_id();
         let data = data.into_body();
         bail!(ErrorInt::RtspUnassignedChannelError {
             conn_ctx: *self.inner.ctx(),
@@ -1291,12 +1449,19 @@ impl RtspConnection {
             req.insert_header(rtsp_types::headers::AUTHORIZATION, authorization);
         }
         req.insert_header(rtsp_types::headers::CSEQ, cseq.to_string());
-        if let Some(ref u) = options.user_agent {
-            req.insert_header(rtsp_types::headers::USER_AGENT, u.to_string());
-        }
+
+        let user_agent = if let Some(ref u) = options.user_agent {
+            u
+        } else {
+            DEFAULT_USER_AGENT
+        };
+        req.insert_header(rtsp_types::headers::USER_AGENT, user_agent.to_string());
+
         Ok(cseq)
     }
 }
+
+const DEFAULT_USER_AGENT: &str = concat!("retina_", env!("CARGO_PKG_VERSION"));
 
 impl<S: State> Session<S> {
     /// Returns the available streams as described by the server.
@@ -1485,17 +1650,22 @@ impl Session<Described> {
         })?;
         match inner.session.as_ref() {
             Some(SessionHeader { id, .. }) if id.as_ref() != &*response.session.id => {
-                bail!(ErrorInt::RtspResponseError {
-                    conn_ctx: *conn.inner.ctx(),
-                    msg_ctx,
-                    method: rtsp_types::Method::Setup,
-                    cseq,
-                    status,
-                    description: format!(
-                        "session id changed from {:?} to {:?}",
-                        id, response.session.id,
-                    ),
-                });
+                match inner.options.session_id {
+                    SessionIdPolicy::UseFirst => (),
+                    _ => {
+                        bail!(ErrorInt::RtspResponseError {
+                            conn_ctx: *conn.inner.ctx(),
+                            msg_ctx,
+                            method: rtsp_types::Method::Setup,
+                            cseq,
+                            status,
+                            description: format!(
+                                "session id changed from {:?} to {:?}",
+                                id, response.session.id,
+                            ),
+                        });
+                    }
+                }
             }
             Some(_) => {}
             None => {
@@ -1695,12 +1865,29 @@ impl Session<Described> {
                         }
                         _ => None,
                     };
-                    let initial_seq = match initial_seq {
-                        Some(0) if policy.ignore_zero_seq => {
-                            log::info!("Ignoring seq=0 on stream {}", i);
+                    let initial_seq = match (initial_seq, policy.initial_seq) {
+                        (Some(seq), InitialSequenceNumberPolicy::Ignore)
+                        | (
+                            Some(seq @ 0 | seq @ 1),
+                            InitialSequenceNumberPolicy::Default
+                            | InitialSequenceNumberPolicy::IgnoreSuspiciousValues,
+                        ) => {
+                            log::info!(
+                                "ignoring PLAY seq={} on stream {} due to policy {:?}",
+                                seq,
+                                i,
+                                policy.initial_seq
+                            );
                             None
                         }
-                        o => o,
+                        (Some(seq), _) => {
+                            log::debug!("setting PLAY seq={} on stream {}", seq, i);
+                            Some(seq)
+                        }
+                        (None, _) => {
+                            log::debug!("no PLAY seq on stream {}", i);
+                            None
+                        }
                     };
                     let conn_ctx = conn.inner.ctx();
                     s.state = StreamState::Playing {
@@ -1719,7 +1906,11 @@ impl Session<Described> {
                                 description,
                             })
                         })?,
-                        rtp_handler: rtp::InorderParser::new(ssrc, initial_seq),
+                        rtp_handler: rtp::InorderParser::new(
+                            ssrc,
+                            initial_seq,
+                            policy.unknown_rtcp_ssrc,
+                        ),
                         ctx,
                         udp_sockets,
                     };
@@ -1739,14 +1930,22 @@ impl Session<Described> {
 /// to a since-closed RTSP connection, as described in case 2 of "Stale sessions"
 /// at [`SessionGroup`]. If there's no known session which explains this,
 /// adds an unknown session with live555's default timeout.
-fn note_stale_live555_data(tool: Option<&Tool>, options: &SessionOptions) {
+fn note_stale_live555_data(
+    tool: Option<&Tool>,
+    options: &SessionOptions,
+    conn_ctx: &crate::ConnectionContext,
+    channel_id: u8,
+    msg_ctx: &RtspMessageContext,
+) {
     let known_to_have_live555_tcp_bug = tool.map(Tool::has_live555_tcp_bug).unwrap_or(false);
     if !known_to_have_live555_tcp_bug {
         log::warn!(
-            "Saw unexpected RTSP packet. This is presumed to be due to a bug in old live555 \
-                    servers' TCP handling, though tool attribute {:?} does not refer to a \
-                    known-buggy version. Consider switching to UDP.",
-            tool
+            "saw unexpected RTSP packet. This is presumed to be due to a bug in old
+             live555 servers' TCP handling, though tool attribute {tool:?} does not refer to a \
+             known-buggy version. Consider switching to UDP.\n\n\
+             conn: {conn_ctx:?}\n\
+             channel: {channel_id}\n\
+             msg: {msg_ctx:?}"
         );
     }
 
@@ -2088,6 +2287,7 @@ impl Session<Playing> {
                     inner.options,
                     stream_ctx,
                     inner.presentation.tool.as_ref(),
+                    conn.inner.ctx(),
                     &pkt_ctx,
                     timeline,
                     m.stream_i,
@@ -2150,6 +2350,7 @@ impl Session<Playing> {
                         inner.options,
                         stream_ctx,
                         inner.presentation.tool.as_ref(),
+                        conn_ctx,
                         &pkt_ctx,
                         timeline,
                         i,
@@ -2167,6 +2368,13 @@ impl Session<Playing> {
                             }))))
                         }
                     }
+                }
+                Err(source) if source.kind() == io::ErrorKind::ConnectionRefused => {
+                    // The packets sent by `punch_firewall_hole` can elicit a
+                    // 'destination unreachable' ICMP response from the server,
+                    // which gets turned into a 'connection refused' error. This
+                    // is not actually a problem so just ignore it.
+                    debug!("Ignoring UDP connection refused error");
                 }
                 Err(source) => {
                     return Poll::Ready(Some(Err(wrap!(ErrorInt::UdpRecvError {
@@ -2200,6 +2408,10 @@ impl Session<Playing> {
                         Ok(None) => buf.clear(),
                         Err(e) => return Poll::Ready(Some(Err(e))),
                     }
+                }
+                Err(source) if source.kind() == io::ErrorKind::ConnectionRefused => {
+                    // See comment above
+                    debug!("Ignoring UDP connection refused error");
                 }
                 Err(source) => {
                     return Poll::Ready(Some(Err(wrap!(ErrorInt::UdpRecvError {
@@ -2864,6 +3076,83 @@ mod tests {
             .await
         },);
         let _session = session.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reject_session_id_change() {
+        session_id_change(SessionIdPolicy::RequireMatch, true).await
+    }
+
+    #[tokio::test]
+    async fn ignore_session_id_change() {
+        session_id_change(SessionIdPolicy::UseFirst, false).await
+    }
+
+    async fn session_id_change(policy: SessionIdPolicy, expect_error: bool) {
+        init_logging();
+        let (conn, mut server) = connect_to_mock().await;
+        let url = Url::parse("rtsp://127.0.0.1:554/camera").unwrap();
+        let group = Arc::new(SessionGroup::default());
+
+        // DESCRIBE.
+        let (session, _) = tokio::join!(
+            Session::describe_with_conn(
+                conn,
+                SessionOptions::default()
+                    .session_group(group.clone())
+                    .session_id(policy),
+                url
+            ),
+            req_response(
+                &mut server,
+                rtsp_types::Method::Describe,
+                response(include_bytes!("testdata/h264dvr_describe.txt"))
+            ),
+        );
+        let mut session = session.unwrap();
+        assert_eq!(session.streams().len(), 2);
+
+        // SETUP.
+        tokio::join!(
+            async {
+                session
+                    .setup(
+                        0,
+                        SetupOptions::default()
+                            .transport(Transport::Udp(UdpTransportOptions::default())),
+                    )
+                    .await
+                    .unwrap();
+            },
+            req_response(
+                &mut server,
+                rtsp_types::Method::Setup,
+                response(include_bytes!("testdata/h264dvr_setup_video.txt"))
+            ),
+        );
+
+        tokio::join!(
+            async {
+                let r = session
+                    .setup(
+                        1,
+                        SetupOptions::default()
+                            .transport(Transport::Udp(UdpTransportOptions::default())),
+                    )
+                    .await;
+                if expect_error {
+                    let e = r.unwrap_err();
+                    assert!(matches!(*e.0, ErrorInt::RtspResponseError { .. }));
+                } else {
+                    r.unwrap();
+                }
+            },
+            req_response(
+                &mut server,
+                rtsp_types::Method::Setup,
+                response(include_bytes!("testdata/h264dvr_setup_audio.txt"))
+            ),
+        );
     }
 
     // See with: cargo test -- --nocapture client::tests::print_sizes

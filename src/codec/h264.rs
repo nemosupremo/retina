@@ -6,6 +6,7 @@
 use std::convert::TryFrom;
 use std::fmt::Write;
 
+use base64::Engine as _;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use h264_reader::nal::{NalHeader, UnitType};
 use log::{debug, log_enabled, trace};
@@ -513,16 +514,26 @@ impl Depacketizer {
             new_pps.as_deref(),
             self.parameters.as_ref(),
         ) {
-            (Some(sps_nal), Some(pps_nal), _) => {
+            (Some(sps_nal), Some(pps_nal), old_ip) => {
                 // TODO: could map this to a RtpPacketError more accurately.
-                self.parameters = Some(InternalParameters::parse_sps_and_pps(sps_nal, pps_nal)?);
+                let seen_extra_trailing_data =
+                    old_ip.map(|o| o.seen_extra_trailing_data).unwrap_or(false);
+                self.parameters = Some(InternalParameters::parse_sps_and_pps(
+                    sps_nal,
+                    pps_nal,
+                    seen_extra_trailing_data,
+                )?);
                 true
             }
             (Some(_), None, Some(old_ip)) | (None, Some(_), Some(old_ip)) => {
                 let sps_nal = new_sps.as_deref().unwrap_or(&old_ip.sps_nal);
                 let pps_nal = new_pps.as_deref().unwrap_or(&old_ip.pps_nal);
                 // TODO: as above, could map this to a RtpPacketError more accurately.
-                self.parameters = Some(InternalParameters::parse_sps_and_pps(sps_nal, pps_nal)?);
+                self.parameters = Some(InternalParameters::parse_sps_and_pps(
+                    sps_nal,
+                    pps_nal,
+                    old_ip.seen_extra_trailing_data,
+                )?);
                 true
             }
             _ => false,
@@ -628,6 +639,86 @@ struct InternalParameters {
 
     /// The (single) PPS NAL.
     pps_nal: Bytes,
+
+    seen_extra_trailing_data: bool,
+}
+
+/// `h264_reader::rbsp::BitRead` impl that *notes* extra trailing data rather than failing on it.
+///
+/// Some (Reolink) cameras appear to have a stray extra byte at the end. Follow the lead of most
+/// other RTSP implementations in tolerating this.
+#[derive(Debug)]
+struct TolerantBitReader<'a, R> {
+    inner: R,
+    has_extra_trailing_data: &'a mut bool,
+}
+
+impl<'a, R: h264_reader::rbsp::BitRead> h264_reader::rbsp::BitRead for TolerantBitReader<'a, R> {
+    fn read_ue(&mut self, name: &'static str) -> Result<u32, h264_reader::rbsp::BitReaderError> {
+        self.inner.read_ue(name)
+    }
+
+    fn read_se(&mut self, name: &'static str) -> Result<i32, h264_reader::rbsp::BitReaderError> {
+        self.inner.read_se(name)
+    }
+
+    fn read_bool(&mut self, name: &'static str) -> Result<bool, h264_reader::rbsp::BitReaderError> {
+        self.inner.read_bool(name)
+    }
+
+    fn read_u8(
+        &mut self,
+        bit_count: u32,
+        name: &'static str,
+    ) -> Result<u8, h264_reader::rbsp::BitReaderError> {
+        self.inner.read_u8(bit_count, name)
+    }
+
+    fn read_u16(
+        &mut self,
+        bit_count: u32,
+        name: &'static str,
+    ) -> Result<u16, h264_reader::rbsp::BitReaderError> {
+        self.inner.read_u16(bit_count, name)
+    }
+
+    fn read_u32(
+        &mut self,
+        bit_count: u32,
+        name: &'static str,
+    ) -> Result<u32, h264_reader::rbsp::BitReaderError> {
+        self.inner.read_u32(bit_count, name)
+    }
+
+    fn read_i32(
+        &mut self,
+        bit_count: u32,
+        name: &'static str,
+    ) -> Result<i32, h264_reader::rbsp::BitReaderError> {
+        self.inner.read_i32(bit_count, name)
+    }
+
+    fn has_more_rbsp_data(
+        &mut self,
+        name: &'static str,
+    ) -> Result<bool, h264_reader::rbsp::BitReaderError> {
+        self.inner.has_more_rbsp_data(name)
+    }
+
+    fn finish_rbsp(self) -> Result<(), h264_reader::rbsp::BitReaderError> {
+        match self.inner.finish_rbsp() {
+            Ok(()) => Ok(()),
+            Err(h264_reader::rbsp::BitReaderError::RemainingData) => {
+                *self.has_extra_trailing_data = true;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn finish_sei_payload(self) -> Result<(), h264_reader::rbsp::BitReaderError> {
+        self.inner.finish_sei_payload()
+    }
 }
 
 impl InternalParameters {
@@ -636,9 +727,7 @@ impl InternalParameters {
         let mut sprop_parameter_sets = None;
         for p in format_specific_params.split(';') {
             match p.trim().split_once('=') {
-                Some((key, value)) if key == "sprop-parameter-sets" => {
-                    sprop_parameter_sets = Some(value)
-                }
+                Some(("sprop-parameter-sets", value)) => sprop_parameter_sets = Some(value),
                 None => return Err("key without value".into()),
                 _ => (),
             }
@@ -649,9 +738,11 @@ impl InternalParameters {
         let mut sps_nal = None;
         let mut pps_nal = None;
         for nal in sprop_parameter_sets.split(',') {
-            let nal = base64::decode(nal).map_err(|_| {
-                "bad sprop-parameter-sets: NAL has invalid base64 encoding".to_string()
-            })?;
+            let nal = base64::engine::general_purpose::STANDARD
+                .decode(nal)
+                .map_err(|_| {
+                    "bad sprop-parameter-sets: NAL has invalid base64 encoding".to_string()
+                })?;
             if nal.is_empty() {
                 return Err("bad sprop-parameter-sets: empty NAL".into());
             }
@@ -675,10 +766,14 @@ impl InternalParameters {
         }
         let sps_nal = sps_nal.ok_or_else(|| "no sps".to_string())?;
         let pps_nal = pps_nal.ok_or_else(|| "no pps".to_string())?;
-        Self::parse_sps_and_pps(&sps_nal, &pps_nal)
+        Self::parse_sps_and_pps(&sps_nal, &pps_nal, false)
     }
 
-    fn parse_sps_and_pps(sps_nal: &[u8], pps_nal: &[u8]) -> Result<InternalParameters, String> {
+    fn parse_sps_and_pps(
+        sps_nal: &[u8],
+        pps_nal: &[u8],
+        mut seen_extra_trailing_data: bool,
+    ) -> Result<InternalParameters, String> {
         let sps_rbsp = h264_reader::rbsp::decode_nal(sps_nal).map_err(|_| "bad sps")?;
         if sps_rbsp.len() < 5 {
             return Err("bad sps".into());
@@ -687,11 +782,19 @@ impl InternalParameters {
             "avc1.{:02X}{:02X}{:02X}",
             sps_rbsp[0], sps_rbsp[1], sps_rbsp[2]
         );
-        let sps = h264_reader::nal::sps::SeqParameterSet::from_bits(
-            h264_reader::rbsp::BitReader::new(&*sps_rbsp),
-        )
-        .map_err(|e| format!("Bad SPS: {e:?}"))?;
-        debug!("sps: {:#?}", &sps);
+
+        let mut sps_has_extra_trailing_data = false;
+        let sps_hex = crate::hex::LimitedHex::new(sps_nal, 256);
+        let sps = h264_reader::nal::sps::SeqParameterSet::from_bits(TolerantBitReader {
+            inner: h264_reader::rbsp::BitReader::new(&*sps_rbsp),
+            has_extra_trailing_data: &mut sps_has_extra_trailing_data,
+        })
+        .map_err(|e| format!("Bad SPS {sps_hex}: {e:?}"))?;
+        debug!("SPS {sps_hex}: {:#?}", &sps);
+        if sps_has_extra_trailing_data && !seen_extra_trailing_data {
+            log::warn!("Ignoring trailing data in SPS {sps_hex}; will not log about trailing data again for this stream.");
+            seen_extra_trailing_data = true;
+        }
 
         let pixel_dimensions = sps
             .pixel_dimensions()
@@ -767,6 +870,7 @@ impl InternalParameters {
             },
             sps_nal,
             pps_nal,
+            seen_extra_trailing_data,
         })
     }
 }
@@ -1515,6 +1619,75 @@ mod tests {
                 payload_type: 0,
             }
             .build(*b"\x68\xea\x8f\x20")
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(d.pull().is_none());
+        d.push(
+            ReceivedPacketBuilder {
+                // IDR slice
+                ctx: crate::PacketContext::dummy(),
+                stream_id: 0,
+                timestamp,
+                ssrc: 0,
+                sequence_number: 2,
+                loss: 0,
+                mark: true,
+                payload_type: 0,
+            }
+            .build(*b"\x65idr slice")
+            .unwrap(),
+        )
+        .unwrap();
+        let frame = match d.pull() {
+            Some(CodecItem::VideoFrame(frame)) => frame,
+            _ => panic!(),
+        };
+        assert!(frame.has_new_parameters);
+        assert!(d.parameters().is_some());
+    }
+
+    #[test]
+    fn sps_with_extra_trailing_bytes() {
+        init_logging();
+        // https://github.com/scottlamb/retina/issues/102
+        const PARAMS: &str = "packetization-mode=1;profile-level-id=640033";
+        let mut d = super::Depacketizer::new(90_000, Some(PARAMS)).unwrap();
+        assert!(d.parameters().is_none());
+
+        // The stream should honor in-band parameters, even with an extra byte.
+        let timestamp = crate::Timestamp {
+            timestamp: 0,
+            clock_rate: NonZeroU32::new(90_000).unwrap(),
+            start: 0,
+        };
+        d.push(ReceivedPacketBuilder {
+            // SPS
+            ctx: crate::PacketContext::dummy(),
+            stream_id: 0,
+            timestamp,
+            ssrc: 0,
+            sequence_number: 0,
+            loss: 0,
+            mark: false,
+            payload_type: 0,
+        }.build(
+            *b"\x67\x64\x00\x33\xac\x15\x14\xa0\xa0\x3d\xa1\x00\x00\x04\xf6\x00\x00\x63\x38\x04\x04",
+        ).unwrap()).unwrap();
+        assert!(d.pull().is_none());
+        d.push(
+            ReceivedPacketBuilder {
+                // PPS
+                ctx: crate::PacketContext::dummy(),
+                stream_id: 0,
+                timestamp,
+                ssrc: 0,
+                sequence_number: 1,
+                loss: 0,
+                mark: false,
+                payload_type: 0,
+            }
+            .build(*b"\x68\xee\x3c\xb0")
             .unwrap(),
         )
         .unwrap();
