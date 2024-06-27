@@ -404,6 +404,23 @@ impl VideoFrame {
     }
 }
 
+impl VideoFrame {
+    pub fn new(stream_id: usize, idr: bool, timestamp: crate::Timestamp, data: Vec<u8>) -> Self {
+        Self {
+            start_ctx: crate::PacketContext::dummy(),
+            end_ctx: crate::PacketContext::dummy(),
+
+            has_new_parameters: false,
+            loss: 0,
+            timestamp,
+            stream_id,
+            is_random_access_point: idr,
+            is_disposable: false,
+            data,
+        }
+    }
+}
+
 impl std::fmt::Debug for VideoFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         //use pretty_hex::PrettyHex;
