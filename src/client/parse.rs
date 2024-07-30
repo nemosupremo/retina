@@ -575,8 +575,12 @@ pub(crate) fn parse_setup(response: &rtsp_types::Response<Bytes>) -> Result<Setu
     let mut server_port = None;
     for part in transport.as_str().split(';') {
         if let Some(v) = part.strip_prefix("ssrc=") {
-            let v = u32::from_str_radix(v, 16).map_err(|_| format!("Unparseable ssrc {v}"))?;
-            ssrc = Some(v);
+            let v = match u32::from_str_radix(v, 16).map_err(|_| format!("Unparseable ssrc {v}")) {
+                Ok(v) => Ok(v),
+                // It seems like some cameras (ex. FLIR N237BE) seem to have an SSRC encoded as base 10
+                Err(_) => u32::from_str_radix(v, 10).map_err(|_| format!("Unparseable ssrc {v}")),
+            };
+            ssrc = Some(v?);
             break;
         } else if let Some(interleaved) = part.strip_prefix("interleaved=") {
             let mut channels = interleaved.splitn(2, '-');
@@ -684,9 +688,13 @@ pub(crate) fn parse_play(
                     Err(_) => warn!("Unparseable rtptime in RTP-Info header {:?}", rtp_info),
                 },
                 "ssrc" => {
-                    let ssrc = u32::from_str_radix(value, 16)
-                        .map_err(|_| format!("Unparseable ssrc {value}"))?;
-                    state.ssrc = Some(ssrc);
+                    let ssrc = match u32::from_str_radix(value, 16).map_err(|_| format!("Unparseable ssrc {value}")) {
+                        Ok(v) => Ok(v),
+                        // It seems like some cameras (ex. FLIR N237BE) seem to have an SSRC encoded as base 10
+                        Err(_) => u32::from_str_radix(value, 10).map_err(|_| format!("Unparseable ssrc {value}")),
+                    };
+
+                    state.ssrc = Some(ssrc?);
                 }
                 _ => {}
             }

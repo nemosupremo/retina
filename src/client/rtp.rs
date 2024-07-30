@@ -183,7 +183,7 @@ impl InorderParser {
             } else {
                 log::info!(
                     "Skipping invalid rtp packet: wrong ssrc after {} RTP pkts + {} RTCP pkts; expecting ssrc={:?} seq={:?} \
-                         (initial ssrc: {:?})",
+                         (initial ssrc: 0x{:02x})",
                         self.seen_rtp_packets, self.seen_rtcp_packets, self.ssrc, self.seq, ssrc,
                 );
                 return Ok(None);
