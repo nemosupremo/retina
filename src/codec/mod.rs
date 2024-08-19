@@ -76,7 +76,6 @@ pub struct VideoParameters {
 
 impl VideoParameters {
     pub fn new(
-        &self,
         pixel_dimensions: (u32, u32),
         rfc6381_codec: String,
         pixel_aspect_ratio: Option<(u32, u32)>,
