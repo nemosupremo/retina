@@ -75,6 +75,23 @@ pub struct VideoParameters {
 }
 
 impl VideoParameters {
+    pub fn new(
+        &self,
+        pixel_dimensions: (u32, u32),
+        rfc6381_codec: String,
+        pixel_aspect_ratio: Option<(u32, u32)>,
+        frame_rate: Option<(u32, u32)>,
+        extra_data: Bytes,
+    ) -> Self {
+        Self {
+            pixel_dimensions,
+            rfc6381_codec,
+            pixel_aspect_ratio,
+            frame_rate,
+            extra_data,
+        }
+    }
+
     /// Returns a codec description in
     /// [RFC-6381](https://tools.ietf.org/html/rfc6381) form, eg `avc1.4D401E`.
     // TODO: use https://github.com/dholroyd/rfc6381-codec crate once published?
