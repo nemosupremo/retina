@@ -1,3 +1,4 @@
+// Copyright (C) 2021 Scott Lamb <slamb@slamb.org>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! [H.265]-encoded video.
