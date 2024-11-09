@@ -3,6 +3,7 @@
 use std::convert::TryFrom;
 use std::fmt::Write;
 
+use base64::Engine;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hevc_parser::hevc::{NalHeader, UnitType};
 use log::{debug, log_enabled, trace};
@@ -167,7 +168,7 @@ impl Depacketizer {
                             .last()
                             .ok_or("nals should not be empty".to_string())?
                             .hdr;
-                        if can_end_au(last_nal_hdr.nal_unit_type()) {
+                        if !access_unit.in_fu && can_end_au(last_nal_hdr.nal_unit_type()) {
                             access_unit.end_ctx = *pkt.ctx();
                             self.pending =
                                 Some(self.finalize_access_unit(access_unit, "ts change")?);
@@ -436,6 +437,9 @@ impl Depacketizer {
         }
         for nal in &self.nals {
             let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            if next_piece_idx > self.pieces.len() {
+                return Err("Incomplete buffered nals finalizing access unit".into());
+            }
             let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
             match nal.hdr.nal_unit_type() {
                 UnitType::NalVps => {
@@ -620,9 +624,11 @@ impl InternalParameters {
                     if !matches!(key, "sprop-sps" | "sprop-pps" | "sprop-vps") {
                         continue;
                     }
-                    let nal = base64::decode(value).map_err(|_| {
-                        "bad parameter: NAL has invalid base64 encoding".to_string()
-                    })?;
+                    let nal = base64::engine::general_purpose::STANDARD
+                        .decode(value)
+                        .map_err(|_| {
+                            "bad parameter: NAL has invalid base64 encoding".to_string()
+                        })?;
                     if nal.is_empty() {
                         return Err(format!("bad parameter {key}: empty NAL"));
                     }
