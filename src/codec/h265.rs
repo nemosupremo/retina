@@ -160,11 +160,11 @@ impl Depacketizer {
                         AccessUnit::start(&pkt, 0, false)
                     } else if access_unit.timestamp.timestamp != pkt.timestamp().timestamp {
                         if access_unit.in_fu {
-                            return Err(format!(
+                            log::debug!(
                                 "Timestamp changed from {} to {} in the middle of a fragmented NAL",
                                 access_unit.timestamp,
                                 pkt.timestamp()
-                            ));
+                            );
                         }
                         let last_nal_hdr = self
                             .nals
@@ -227,9 +227,12 @@ impl Depacketizer {
             1..=47 => {
                 // Single NAL Unit. https://datatracker.ietf.org/doc/html/rfc7798#section-4.4.1
                 if access_unit.in_fu {
-                    return Err(format!(
-                        "Non-fragmented NAL {nal_header:02x} while fragment in progress"
-                    ));
+                    log::debug!("Non-fragmented NAL {nal_header:02x} while fragment in progress");
+                    self.nals.pop();
+                    let next_piece_idx =
+                        self.nals.last().map(|nal| nal.next_piece_idx).unwrap_or(0) as usize;
+                    self.pieces.drain(next_piece_idx..);
+                    access_unit.in_fu = false;
                 }
                 let len =
                     u32::try_from(data.len()).map_err(|_| "data len > u16::MAX".to_string())? + 2;
@@ -242,6 +245,14 @@ impl Depacketizer {
             }
             48 => {
                 // Aggregation Packet. https://datatracker.ietf.org/doc/html/rfc7798#section-4.4.2
+                if access_unit.in_fu {
+                    log::debug!("Non-fragmented NAL {nal_header:02x} while fragment in progress");
+                    self.nals.pop();
+                    let next_piece_idx =
+                        self.nals.last().map(|nal| nal.next_piece_idx).unwrap_or(0) as usize;
+                    self.pieces.drain(next_piece_idx..);
+                    access_unit.in_fu = false;
+                }
                 loop {
                     if data.remaining() < 3 {
                         return Err(format!(
@@ -293,6 +304,18 @@ impl Depacketizer {
             49 => {
                 // Fragmentation Unit. https://datatracker.ietf.org/doc/html/rfc7798#section-4.4.3
                 if data.len() < 2 {
+                    if access_unit.in_fu
+                        && self
+                            .nals
+                            .last()
+                            .is_some_and(|nal| nal.next_piece_idx == u32::MAX)
+                    {
+                        self.nals.pop();
+                        let next_piece_idx =
+                            self.nals.last().map(|nal| nal.next_piece_idx).unwrap_or(0) as usize;
+                        self.pieces.drain(next_piece_idx..);
+                        access_unit.in_fu = false;
+                    }
                     return Err(format!("FU len {} too short", data.len()));
                 }
                 let fu_header = data.get_u8();
@@ -308,14 +331,25 @@ impl Depacketizer {
                 if start && end {
                     return Err(format!("Invalid FU header {fu_header:02x}"));
                 }
+                if start && mark {
+                    return Err("FU pkt with START && MARK".into());
+                }
                 if !end && mark {
                     return Err("FU pkt with MARK && !END".into());
                 }
                 let u32_len = u32::try_from(data.len())
                     .map_err(|_| "RTP packet len must be < u16::MAX".to_string())?;
                 match (start, access_unit.in_fu) {
-                    (true, true) => return Err("FU with start bit while frag in progress".into()),
-                    (true, false) => {
+                    (true, in_fu) => {
+                        if in_fu {
+                            log::debug!("FU with start bit while frag in progress");
+                            self.nals.pop();
+                            let next_piece_idx =
+                                self.nals.last().map(|nal| nal.next_piece_idx).unwrap_or(0)
+                                    as usize;
+                            self.pieces.drain(next_piece_idx..);
+                            access_unit.in_fu = false;
+                        }
                         self.add_piece(data)?;
                         self.nals.push(Nal {
                             hdr,
@@ -440,9 +474,6 @@ impl Depacketizer {
         }
         for nal in &self.nals {
             let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
-            if next_piece_idx > self.pieces.len() {
-                return Err("Incomplete buffered nals finalizing access unit".into());
-            }
             let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
             match nal.hdr.nal_unit_type() {
                 UnitType::NalVps => {
