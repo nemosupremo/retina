@@ -454,7 +454,11 @@ impl Depacketizer {
             self.log_access_unit(&au, reason);
         }
         for nal in &self.nals {
-            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let next_piece_idx = match nal.next_piece_idx {
+                u32::MAX => self.pieces.len(),
+                x => usize::try_from(x).expect("u32 fits in usize"),
+            };
+
             let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
             match nal.hdr.nal_unit_type() {
                 UnitType::SeqParameterSet => {
@@ -490,7 +494,10 @@ impl Depacketizer {
         let mut data = Vec::with_capacity(retained_len);
         piece_idx = 0;
         for nal in &self.nals {
-            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let next_piece_idx = match nal.next_piece_idx {
+                u32::MAX => self.pieces.len(),
+                x => usize::try_from(x).expect("u32 fits in usize"),
+            };
             let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
             data.extend_from_slice(&nal.len.to_be_bytes()[..]);
             data.push(nal.hdr.into());
