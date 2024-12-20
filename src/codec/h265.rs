@@ -473,7 +473,10 @@ impl Depacketizer {
             self.log_access_unit(&au, reason);
         }
         for nal in &self.nals {
-            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let next_piece_idx = match nal.next_piece_idx {
+                u32::MAX => self.pieces.len(),
+                x => usize::try_from(x).expect("u32 fits in usize"),
+            };
             let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
             match nal.hdr.nal_unit_type() {
                 UnitType::NalVps => {
@@ -522,7 +525,10 @@ impl Depacketizer {
         let mut nals = vec![];
         piece_idx = 0;
         for nal in &self.nals {
-            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let next_piece_idx = match nal.next_piece_idx {
+                u32::MAX => self.pieces.len(),
+                x => usize::try_from(x).expect("u32 fits in usize"),
+            };
             let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
 
             nals.extend_from_slice(&[0, 0, 0, 1]);
