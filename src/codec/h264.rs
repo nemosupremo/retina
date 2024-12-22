@@ -339,10 +339,10 @@ impl Depacketizer {
                             self.pieces.clear();
                             access_unit.in_fu_a = false;
                         }
-                        self.add_piece(data)?;
+                        let next_piece_idx = self.add_piece(data)?;
                         self.nals.push(Nal {
                             hdr: nal_header,
-                            next_piece_idx: u32::MAX, // should be overwritten later.
+                            next_piece_idx, // should be overwritten later.
                             len: 1 + u32_len,
                         });
                         access_unit.in_fu_a = true;
@@ -357,8 +357,8 @@ impl Depacketizer {
                             ));
                         }
                         nal.len += u32_len;
+                        nal.next_piece_idx = pieces;
                         if end {
-                            nal.next_piece_idx = pieces;
                             access_unit.in_fu_a = false;
                         } else if mark {
                             return Err("FU-A has MARK and no END".into());
@@ -454,12 +454,11 @@ impl Depacketizer {
             self.log_access_unit(&au, reason);
         }
         for nal in &self.nals {
-            let next_piece_idx = match nal.next_piece_idx {
-                u32::MAX => self.pieces.len(),
-                x => usize::try_from(x).expect("u32 fits in usize"),
-            };
-
-            let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
+            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let nal_pieces = self.pieces.get(piece_idx..next_piece_idx).ok_or(format!(
+                "Invalid nal, pieces range: [{piece_idx}..{next_piece_idx}], len pieces: {}",
+                self.pieces.len()
+            ))?;
             match nal.hdr.nal_unit_type() {
                 UnitType::SeqParameterSet => {
                     if self
@@ -494,11 +493,11 @@ impl Depacketizer {
         let mut data = Vec::with_capacity(retained_len);
         piece_idx = 0;
         for nal in &self.nals {
-            let next_piece_idx = match nal.next_piece_idx {
-                u32::MAX => self.pieces.len(),
-                x => usize::try_from(x).expect("u32 fits in usize"),
-            };
-            let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
+            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let nal_pieces = self.pieces.get(piece_idx..next_piece_idx).ok_or(format!(
+                "Invalid nal, pieces range: [{piece_idx}..{next_piece_idx}], len pieces: {}",
+                self.pieces.len()
+            ))?;
             data.extend_from_slice(&nal.len.to_be_bytes()[..]);
             data.push(nal.hdr.into());
             let mut actual_len = 1;

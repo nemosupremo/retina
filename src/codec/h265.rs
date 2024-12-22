@@ -350,10 +350,10 @@ impl Depacketizer {
                             self.pieces.drain(next_piece_idx..);
                             access_unit.in_fu = false;
                         }
-                        self.add_piece(data)?;
+                        let next_piece_idx = self.add_piece(data)?;
                         self.nals.push(Nal {
                             hdr,
-                            next_piece_idx: u32::MAX, // should be overwritten later.
+                            next_piece_idx, // should be overwritten later.
                             len: 2 + u32_len,
                         });
                         access_unit.in_fu = true;
@@ -371,8 +371,8 @@ impl Depacketizer {
                             ));
                         }
                         nal.len += u32_len;
+                        nal.next_piece_idx = pieces;
                         if end {
-                            nal.next_piece_idx = pieces;
                             access_unit.in_fu = false;
                         } else if mark {
                             return Err("FU has MARK and no END".into());
@@ -473,8 +473,11 @@ impl Depacketizer {
             self.log_access_unit(&au, reason);
         }
         for nal in &self.nals {
-            let next_piece_idx = std::cmp::min(nal.next_piece_idx as usize, self.pieces.len());
-            let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
+            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let nal_pieces = self.pieces.get(piece_idx..next_piece_idx).ok_or(format!(
+                "Invalid nal, pieces range: [{piece_idx}..{next_piece_idx}], len pieces: {}",
+                self.pieces.len()
+            ))?;
             match nal.hdr.nal_unit_type() {
                 UnitType::NalVps => {
                     if self
@@ -522,8 +525,11 @@ impl Depacketizer {
         let mut nals = vec![];
         piece_idx = 0;
         for nal in &self.nals {
-            let next_piece_idx = std::cmp::min(nal.next_piece_idx as usize, self.pieces.len());
-            let nal_pieces = &self.pieces[piece_idx..next_piece_idx];
+            let next_piece_idx = usize::try_from(nal.next_piece_idx).expect("u32 fits in usize");
+            let nal_pieces = self.pieces.get(piece_idx..next_piece_idx).ok_or(format!(
+                "Invalid nal, pieces range: [{piece_idx}..{next_piece_idx}], len pieces: {}",
+                self.pieces.len()
+            ))?;
 
             nals.extend_from_slice(&[0, 0, 0, 1]);
             nals.push(((u16::from(nal.hdr) >> 8) & 0xFF) as u8);
