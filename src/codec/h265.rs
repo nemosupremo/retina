@@ -388,7 +388,10 @@ impl Depacketizer {
                             };
                             return Ok(());
                         }
-                        return Err("FU has start bit unset while no frag in progress".into());
+                        log::debug!(
+                            "FU has start bit unset while no frag in progress, dropping packet"
+                        );
+                        // return Err("FU has start bit unset while no frag in progress".into());
                     }
                 }
             }
