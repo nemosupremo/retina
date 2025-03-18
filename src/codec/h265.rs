@@ -365,10 +365,16 @@ impl Depacketizer {
                             .last_mut()
                             .ok_or("nals non-empty while in fu".to_string())?;
                         if u16::from(hdr) != u16::from(nal.hdr) {
-                            return Err(format!(
+                            //return Err(format!(
+                            //    "FU has inconsistent NAL type: {:?} then {:?}",
+                            //    nal.hdr, hdr,
+                            //));
+                            log::debug!(
                                 "FU has inconsistent NAL type: {:?} then {:?}",
-                                nal.hdr, hdr,
-                            ));
+                                nal.hdr,
+                                hdr,
+                            );
+                            return Ok(());
                         }
                         nal.len += u32_len;
                         nal.next_piece_idx = pieces;
